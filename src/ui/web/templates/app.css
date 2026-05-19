@@ -1,3 +1,9 @@
+/* Suppress WebView tap-highlight ("blue preview box" on Android click). */
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
 /* ===== Theme Variables ===== */
 :root,
 [data-theme="light"] {

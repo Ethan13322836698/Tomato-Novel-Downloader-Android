@@ -6,6 +6,9 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -18,6 +21,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Fully immersive: hide status + nav bars; swipe from edge to reveal transiently.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
 
         webView = WebView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -95,6 +106,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun errorPage(msg: String) =
         "<html><body style='font-family:sans-serif;padding:24px;'><h2>启动失败</h2><pre>$msg</pre></body></html>"
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            WindowInsetsControllerCompat(window, window.decorView)
+                .hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
 
     override fun onDestroy() {
         super.onDestroy()
