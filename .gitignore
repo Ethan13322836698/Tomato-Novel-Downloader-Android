@@ -185,4 +185,6 @@ target/
 
 # Added by cargo
 
-/target
+/targetandroid/app/build/
+android/.gradle/
+android/app/src/main/jniLibs/

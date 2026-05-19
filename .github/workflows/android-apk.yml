@@ -1,0 +1,148 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to upload APK to (e.g. v2.4.7). Leave blank to only upload artifact.'
+        required: false
+        default: ''
+
+jobs:
+  build-apk:
+    name: Build APK (arm64+arm32, no-official-api, --server)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Rust (android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+          sdkmanager "ndk;26.1.10909125" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+
+      - name: Configure Android linker (rustc env)
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "$TOOLCHAIN" >> "$GITHUB_PATH"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_AR=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android21-clang++" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$TOOLCHAIN/armv7a-linux-androideabi21-clang" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_AR=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
+          echo "CC_armv7_linux_androideabi=$TOOLCHAIN/armv7a-linux-androideabi21-clang" >> "$GITHUB_ENV"
+          echo "CXX_armv7_linux_androideabi=$TOOLCHAIN/armv7a-linux-androideabi21-clang++" >> "$GITHUB_ENV"
+          echo "AR_armv7_linux_androideabi=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
+
+      - name: Stub private Official-API path dep
+        shell: bash
+        run: |
+          set -euo pipefail
+          STUB="$GITHUB_WORKSPACE/../Tomato-Novel-Official-API"
+          mkdir -p "$STUB/src"
+          cat > "$STUB/Cargo.toml" <<'EOF'
+          [package]
+          name = "tomato-novel-official-api"
+          version = "0.0.0"
+          edition = "2021"
+          EOF
+          echo '' > "$STUB/src/lib.rs"
+
+      - name: Read crate version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: android-apk-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            android-apk-
+
+      - name: Build Rust (aarch64-linux-android)
+        run: cargo build --release --target aarch64-linux-android --no-default-features --features no-official-api,tts-native,clipboard
+
+      - name: Build Rust (armv7-linux-androideabi)
+        run: cargo build --release --target armv7-linux-androideabi --no-default-features --features no-official-api,tts-native,clipboard
+
+      - name: Place Rust binaries into jniLibs as libtnd.so
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
+          cp target/aarch64-linux-android/release/tomato-novel-downloader android/app/src/main/jniLibs/arm64-v8a/libtnd.so
+          cp target/armv7-linux-androideabi/release/tomato-novel-downloader android/app/src/main/jniLibs/armeabi-v7a/libtnd.so
+          ls -lh android/app/src/main/jniLibs/*/libtnd.so
+
+      - name: Generate gradle wrapper
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle wrapper --gradle-version 8.9 --distribution-type bin
+          ls gradlew gradle/wrapper/gradle-wrapper.properties
+
+      - name: Build APK (release, debug-signed)
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon -PvName=${{ steps.ver.outputs.version }} -PvCode=1 assembleRelease
+
+      - name: Stage APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          src=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n1)
+          cp "$src" "dist/TomatoNovelDownloader-v${{ steps.ver.outputs.version }}-universal.apk"
+          ls -lh dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist
+
+      - name: Upload to release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.release_tag }}" dist/*.apk --clobber --repo "$GITHUB_REPOSITORY"
