@@ -48,6 +48,20 @@ jobs:
           echo "CXX_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android21-clang++" >> "$GITHUB_ENV"
           echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar" >> "$GITHUB_ENV"
 
+      - name: Stub private Official-API path dep
+        shell: bash
+        run: |
+          set -euo pipefail
+          STUB="$GITHUB_WORKSPACE/../Tomato-Novel-Official-API"
+          mkdir -p "$STUB/src"
+          cat > "$STUB/Cargo.toml" <<'EOF'
+          [package]
+          name = "tomato-novel-official-api"
+          version = "0.0.0"
+          edition = "2021"
+          EOF
+          echo '' > "$STUB/src/lib.rs"
+
       - name: Read crate version
         id: ver
         shell: bash
